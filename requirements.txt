@@ -1,4 +1,5 @@
 fastapi
 uvicorn
 crawlee[playwright]
+playwright
 python-dotenv
