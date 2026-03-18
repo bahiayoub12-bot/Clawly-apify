@@ -1,92 +1,68 @@
-"""
-my-crawler — Crawlee + FastAPI
-يستقبل URL ويعيد البيانات المكشوطة عبر API
-"""
-
-import asyncio
 import os
-from typing import Any
-
-from fastapi import FastAPI, HTTPException
+import urllib.parse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from crawlee.playwright_crawler import PlaywrightCrawler, PlaywrightCrawlingContext
 
-from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
+app = FastAPI(title="Albert Ultimate Crawler", version="2.0.0")
 
-# ──────────────────────────────────────────
-app = FastAPI(title="My Crawler API", version="1.0.0")
+# 1. حل مشكلة الحظر في المتصفح (CORS) - ضروري جداً
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-
-# ── نماذج الطلب والرد ──────────────────────
-class CrawlRequest(BaseModel):
-    url: str
-    max_pages: int = 5  # عدد الصفحات الأقصى
-
-
+# 2. تعريف البيانات الصادرة
 class PageData(BaseModel):
     url: str
-    title: str | None
-    text_preview: str | None  # أول 500 حرف من النص
+    content: str
 
-
-class CrawlResponse(BaseModel):
-    success: bool
-    pages_crawled: int
-    data: list[PageData]
-
-
-# ── منطق الكشط ────────────────────────────
-async def run_crawler(start_url: str, max_pages: int) -> list[dict[str, Any]]:
-    results: list[dict[str, Any]] = []
-
-    crawler = BeautifulSoupCrawler(
-        max_requests_per_crawl=max_pages,
-    )
+# 3. محرك البحث الذكي (باستخدام Playwright لدعم كل المواقع)
+async def run_smart_crawler(target_url: str):
+    results = []
+    # نستخدم Playwright لأنه يفتح المواقع كأنه إنسان (يدعم JS)
+    crawler = PlaywrightCrawler(max_requests_per_crawling=1)
 
     @crawler.router.default_handler
-    async def handler(context: BeautifulSoupCrawlingContext) -> None:
-        # استخراج العنوان
-        title = context.soup.title.string.strip() if context.soup.title else None
+    async def handler(context: PlaywrightCrawlingContext):
+        # تسريع العملية بحظر الصور والإعلانات
+        await context.page.route("**/*.{png,jpg,jpeg,gif,svg,css,pdf}", lambda route: route.abort())
+        
+        # استخراج النص النظيف
+        text = await context.page.locator('body').inner_text()
+        results.append({"url": context.request.url, "content": text[:4000]})
 
-        # استخراج النص الخام وتنظيفه
-        raw_text = context.soup.get_text(separator=" ", strip=True)
-        text_preview = raw_text[:500] if raw_text else None
-
-        results.append({
-            "url": context.request.url,
-            "title": title,
-            "text_preview": text_preview,
-        })
-
-        # متابعة الروابط داخل نفس الدومين
-        await context.enqueue_links()
-
-    await crawler.run([start_url])
+    await crawler.run([target_url])
     return results
 
+# 4. النقطة الشاملة (تستقبل GET و POST وتدعم كل المسميات)
+@app.api_route("/search", methods=["GET", "POST"])
+@app.api_route("/crawl", methods=["GET", "POST"])
+@app.api_route("/scrape", methods=["GET", "POST"])
+async def universal_api(request: Request, url: str = Query(None)):
+    # جلب الرابط وفك تشفيره نهائياً
+    target_url = url
+    if request.method == "POST":
+        try:
+            body = await request.json()
+            target_url = body.get("url", url)
+        except: pass
 
-# ── نقاط الوصول (Endpoints) ───────────────
-@app.get("/")
-def root():
-    return {"status": "ok", "message": "Crawler API is running 🚀"}
+    if not target_url:
+        raise HTTPException(status_code=400, detail="الرابط مطلوب")
 
-
-@app.post("/crawl", response_model=CrawlResponse)
-async def crawl(request: CrawlRequest):
-    if not request.url.startswith("http"):
-        raise HTTPException(status_code=400, detail="URL يجب أن يبدأ بـ http أو https")
+    # فك التشفير (العلاج الجذري)
+    decoded_url = urllib.parse.unquote(target_url)
 
     try:
-        data = await run_crawler(request.url, request.max_pages)
-        return CrawlResponse(
-            success=True,
-            pages_crawled=len(data),
-            data=[PageData(**item) for item in data],
-        )
+        data = await run_smart_crawler(decoded_url)
+        return {"success": True, "data": data[0]["content"] if data else "لا يوجد محتوى"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"success": False, "error": str(e)}
 
-
-# ── تشغيل مباشر (اختياري) ─────────────────
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+@app.get("/")
+def health():
+    return {"status": "online", "boss": "Albert Samara"}
