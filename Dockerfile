@@ -1,9 +1,8 @@
 # ══════════════════════════════════════════
-# Dockerfile — my-crawler
+# Dockerfile — Clawly-apify
 # Python + Crawlee + Playwright + Chromium
 # ══════════════════════════════════════════
 
-# المرحلة 1: صورة الأساس
 FROM python:3.12-slim
 
 # ── منع التفاعل أثناء البناء ──────────────
@@ -11,9 +10,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
+# ── مسار Chromium الثابت ──────────────────
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 # ── اعتمادات النظام اللازمة لـ Playwright ─
 RUN apt-get update && apt-get install -y \
-    # مكتبات المتصفح الأساسية
     libnss3 \
     libatk1.0-0 \
     libatk-bridge2.0-0 \
@@ -28,7 +29,6 @@ RUN apt-get update && apt-get install -y \
     libasound2 \
     libpango-1.0-0 \
     libcairo2 \
-    # أدوات مساعدة
     wget \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -36,13 +36,13 @@ RUN apt-get update && apt-get install -y \
 # ── مجلد العمل ───────────────────────────
 WORKDIR /app
 
-# ── تثبيت المكتبات (طبقة منفصلة للكاش) ──
+# ── تثبيت المكتبات ────────────────────────
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ── تثبيت Chromium عبر Playwright ────────
-# هذا السطر هو "السر" الذي يجعل Crawlee يعمل
+# ── تثبيت Chromium في المسار الثابت ───────
 RUN playwright install --with-deps chromium
+RUN chmod -R 777 /ms-playwright
 
 # ── نسخ الكود ────────────────────────────
 COPY . .
